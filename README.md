@@ -1,34 +1,164 @@
 # MongoDB Replica Set Setup Guide
 
-This guide walks you through setting up a 3-node MongoDB replica set cluster with authentication and security features.
+This guide provides two methods for setting up a 3-node MongoDB replica set cluster with authentication and security features.
+
+## Table of Contents
+- [Prerequisites](#prerequisites)
+- [Method 1: Docker Compose Setup](#method-1-docker-compose-setup)
+- [Method 2: Manual VM Setup](#method-2-manual-vm-setup)
+- [Testing the Cluster](#testing-the-cluster)
+- [Security Considerations](#security-considerations)
+- [Troubleshooting](#troubleshooting)
+- [Maintenance](#maintenance)
 
 ## Prerequisites
 
+### For Docker Compose
+- Docker and Docker Compose installed
+- At least 4GB RAM available
+- Ports 27017, 27018, 27019 available
+
+### For Manual VM Setup
 - 3 Ubuntu/Debian servers or VMs
 - Network connectivity between all nodes
 - sudo access on all servers
+- At least 1GB RAM per server
 
-## Server Configuration
+---
 
+## Method 1: Docker Compose Setup
+
+### Quick Start
+
+1. **Create docker-compose.yml**
+```yaml
+services:
+  mongo1:
+    image: zahid03/my-mongo:8.0
+    container_name: mongo1
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongodb-data/mongo1:/data/db
+    networks:
+      - mongo-cluster
+    command: >
+      mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongodb-keyfile --auth
+    restart: unless-stopped
+
+  mongo2:
+    image: zahid03/my-mongo:8.0
+    container_name: mongo2
+    ports:
+      - "27018:27017"
+    volumes:
+      - ./mongodb-data/mongo2:/data/db
+    networks:
+      - mongo-cluster
+    command: >
+      mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongodb-keyfile --auth
+    restart: unless-stopped
+
+  mongo3:
+    image: zahid03/my-mongo:8.0
+    container_name: mongo3
+    ports:
+      - "27019:27017"
+    volumes:
+      - ./mongodb-data/mongo3:/data/db
+    networks:
+      - mongo-cluster
+    command: >
+      mongod --replSet rs0 --bind_ip_all --keyFile /etc/mongodb-keyfile --auth
+    restart: unless-stopped
+
+networks:
+  mongo-cluster:
+    driver: bridge
+```
+
+2. **Setup Directory Structure**
+```bash
+# Create data directories
+mkdir -p mongodb-data/mongo1
+mkdir -p mongodb-data/mongo2  
+mkdir -p mongodb-data/mongo3
+
+# Generate security keyfile (this should already be in your custom image)
+# Note: Since you're using zahid03/my-mongo:8.0, the keyfile should be built into the image
+```
+
+3. **Start the Cluster**
+```bash
+docker-compose up -d
+```
+
+4. **Initialize Replica Set**
+```bash
+# Connect to primary node
+docker exec -it mongo1 mongosh
+
+# In MongoDB shell
+rs.initiate({
+  _id: "rs0",
+  members: [
+    { _id: 0, host: "mongo1:27017" },
+    { _id: 1, host: "mongo2:27017" },
+    { _id: 2, host: "mongo3:27017" }
+  ]
+})
+
+# Create admin user
+use admin
+db.createUser({
+  user: 'admin',
+  pwd: 'admin123',
+  roles: ['root']
+})
+
+# Exit and test connection
+exit
+```
+
+5. **Test Connection**
+```bash
+docker exec -it mongo1 mongosh "mongodb://mongo1:27017,mongo2:27017,mongo3:27017/?replicaSet=rs0" -u admin -p admin123 --authenticationDatabase admin
+```
+
+### Docker Management Commands
+```bash
+# View logs
+docker-compose logs -f mongo1
+
+# Stop cluster
+docker-compose down
+
+# Restart specific service
+docker-compose restart mongo1
+
+# View all containers
+docker-compose ps
+```
+
+---
+
+## Method 2: Manual VM Setup
+
+### Server Configuration
 | Node | Hostname | IP Address |
 |------|----------|------------|
 | Primary | mongo-1 | 192.168.56.101 |
 | Secondary | mongo-2 | 192.168.56.102 |
 | Secondary | mongo-3 | 192.168.56.103 |
 
-## Installation Steps
-
-### Step 1: Initial Setup (On All Nodes)
-
+### Step 1: Initial Setup (All Nodes)
 Update system packages and install required dependencies:
-
 ```bash
 sudo apt update
 sudo apt install -y wget curl gnupg
 ```
 
 ### Step 2: Configure Hostnames and Network
-
 On **mongo-1**:
 ```bash
 sudo hostnamectl set-hostname mongo-1
@@ -51,12 +181,10 @@ echo "192.168.56.102 mongo-2" | sudo tee -a /etc/hosts
 echo "192.168.56.103 mongo-3" | sudo tee -a /etc/hosts
 ```
 
-### Step 3: Install MongoDB (On All Nodes)
-
+### Step 3: Install MongoDB (All Nodes)
 Add MongoDB GPG key and repository:
 ```bash
 curl -fsSL https://www.mongodb.org/static/pgp/server-8.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-server-8.0.gpg
-
 echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-8.0.gpg ] https://repo.mongodb.org/apt/ubuntu $(lsb_release -cs)/mongodb-org/8.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-8.0.list
 ```
 
@@ -66,8 +194,7 @@ sudo apt update
 sudo apt install -y mongodb-org
 ```
 
-### Step 4: Configure MongoDB (On All Nodes)
-
+### Step 4: Configure MongoDB (All Nodes)
 Edit the MongoDB configuration file:
 ```bash
 sudo vi /etc/mongod.conf
@@ -106,7 +233,6 @@ processManagement:
 ```
 
 ### Step 5: Create Security Keyfile
-
 On **mongo-1**, generate the keyfile:
 ```bash
 openssl rand -base64 756 | sudo tee /etc/mongodb-keyfile
@@ -132,18 +258,14 @@ sudo chown mongodb:mongodb /etc/mongodb-keyfile
 sudo chmod 600 /etc/mongodb-keyfile
 ```
 
-### Step 6: Start MongoDB Services (On All Nodes)
-
+### Step 6: Start MongoDB Services (All Nodes)
 ```bash
 sudo systemctl start mongod
 sudo systemctl enable mongod
 sudo systemctl status mongod
 ```
 
-## Replica Set Configuration
-
 ### Step 7: Initialize Replica Set
-
 On **mongo-1**, connect to MongoDB and initialize the replica set:
 ```bash
 mongosh
@@ -166,7 +288,6 @@ rs.status()
 ```
 
 ### Step 8: Create Administrative Users
-
 Create admin user:
 ```javascript
 use admin
@@ -195,7 +316,6 @@ db.createUser({
 ```
 
 ### Step 9: Enable Authentication
-
 Edit MongoDB configuration on all nodes:
 ```bash
 sudo nano /etc/mongod.conf
@@ -214,84 +334,206 @@ sudo systemctl restart mongod
 sudo systemctl status mongod
 ```
 
+---
+
 ## Testing the Cluster
 
 ### Connection Test
-
-Connect to the replica set cluster:
 ```bash
-mongosh "mongodb://mongo-1:27017,mongo-2:27017,mongo-3:27017/?replicaSet=rs0" --username admin --password admin123 --authenticationDatabase admin
+# For Docker setup
+docker exec -it mongo1 mongosh "mongodb://mongo1:27017,mongo2:27017,mongo3:27017/?replicaSet=rs0" -u admin -p admin123 --authenticationDatabase admin
+
+# For VM setup
+mongosh "mongodb://mongo-1:27017,mongo-2:27017,mongo-3:27017/?replicaSet=rs0" -u admin -p admin123 --authenticationDatabase admin
 ```
 
 ### Replication Test
-
-In the MongoDB shell:
 ```javascript
-// Check replica set status
+// Check cluster status
 rs.status()
-db.isMaster()
+db.runCommand("isMaster")
 
 // Test write operations
 use testdb
-db.testcollection.insertOne({message: "Hello from cluster", timestamp: new Date()})
-db.testcollection.find()
+db.testcollection.insertOne({
+  message: "Hello from replica set", 
+  timestamp: new Date()
+})
+
+// Verify data
+db.testcollection.find().pretty()
 ```
+
+### Failover Test
+```bash
+# Stop primary node (Docker)
+docker stop mongo1
+
+# Stop primary node (VM)
+sudo systemctl stop mongod  # On current primary
+
+# Check if secondary becomes primary
+rs.status()
+```
+
+---
 
 ## Security Considerations
 
-- **Change default passwords**: Replace `admin123` and `mongo123` with strong, unique passwords
-- **Network security**: Configure firewall rules to restrict access to MongoDB ports
-- **SSL/TLS**: Consider enabling SSL/TLS for encrypted connections
-- **Backup strategy**: Implement regular backup procedures
-- **Monitoring**: Set up monitoring and alerting for the cluster
+### Production Security Checklist
+- [ ] Change default passwords to strong, unique passwords
+- [ ] Enable SSL/TLS encryption
+- [ ] Configure firewall rules (allow only MongoDB ports)
+- [ ] Use specific user roles instead of root access
+- [ ] Implement network segmentation
+- [ ] Regular security updates
+- [ ] Monitor authentication attempts
+
+### Enhanced User Creation
+```javascript
+// Application-specific user
+use admin
+db.createUser({
+  user: "appuser",
+  pwd: "strongpassword123",
+  roles: [
+    { role: "readWrite", db: "myapp" },
+    { role: "read", db: "analytics" }
+  ]
+})
+
+// Read-only user
+db.createUser({
+  user: "readonly",
+  pwd: "readonly123",
+  roles: [{ role: "read", db: "myapp" }]
+})
+```
+
+---
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Connection refused**: Check if MongoDB service is running and firewall settings
-2. **Authentication failed**: Verify username, password, and authentication database
-3. **Replica set issues**: Check network connectivity between nodes and keyfile permissions
-
-### Useful Commands
-
+**Connection Refused**
 ```bash
-# Check MongoDB logs
-sudo tail -f /var/log/mongodb/mongod.log
-
 # Check service status
-sudo systemctl status mongod
+docker ps  # For Docker
+sudo systemctl status mongod  # For VM
 
-# Test connectivity
-telnet mongo-2 27017
+# Check logs
+docker logs mongo1  # For Docker
+sudo tail -f /var/log/mongodb/mongod.log  # For VM
 ```
+
+**Authentication Failed**
+```bash
+# Verify user exists
+use admin
+db.getUsers()
+
+# Check connection string format
+mongosh "mongodb://username:password@host:port/database?authSource=admin"
+```
+
+**Replica Set Issues**
+```javascript
+// Check replica set configuration
+rs.conf()
+rs.status()
+
+// Force reconfigure if needed
+rs.reconfig(config, {force: true})
+```
+
+### Health Check Commands
+```bash
+# Network connectivity
+telnet mongo-2 27017
+
+# MongoDB process
+pgrep mongod
+
+# Port listening
+netstat -tlnp | grep 27017
+```
+
+---
 
 ## Maintenance
 
-### Adding a New Node
-
-To add a fourth node to the replica set:
+### Adding New Node
 ```javascript
+// Add 4th node
 rs.add("mongo-4:27017")
+rs.status()
 ```
 
-### Removing a Node
-
+### Removing Node
 ```javascript
+// Remove node
 rs.remove("mongo-3:27017")
 ```
 
 ### Checking Replica Lag
-
 ```javascript
 rs.printSlaveReplicationInfo()
 ```
 
-## Connection Strings
+### Backup Strategy
+```bash
+# Create backup
+mongodump --host="mongo1:27017" --username="admin" --password="admin123" --authenticationDatabase="admin" --out=/backup/
 
-- **Admin connection**: `mongodb://admin:admin123@mongo-1:27017,mongo-2:27017,mongo-3:27017/?replicaSet=rs0&authSource=admin`
-- **Application connection**: `mongodb://mongo:mongo123@mongo-1:27017,mongo-2:27017,mongo-3:27017/mongo_db?replicaSet=rs0`
+# Restore backup
+mongorestore --host="mongo1:27017" --username="admin" --password="admin123" --authenticationDatabase="admin" /backup/
+```
+
+### Monitoring Commands
+```javascript
+// Check replication lag
+rs.printSecondaryReplicationInfo()
+
+// Database statistics
+db.stats()
+
+// Connection statistics  
+db.serverStatus().connections
+```
 
 ---
 
-**Note**: This setup is intended for development/testing environments. For production deployments, implement additional security measures, monitoring, and backup strategies.
+## Connection Strings
+
+### Docker Setup
+```bash
+# Admin connection
+mongodb://admin:admin123@localhost:27017,localhost:27018,localhost:27019/?replicaSet=rs0&authSource=admin
+
+# Application connection
+mongodb://appuser:password@localhost:27017,localhost:27018,localhost:27019/myapp?replicaSet=rs0
+```
+
+### VM Setup
+```bash
+# Admin connection
+mongodb://admin:admin123@mongo-1:27017,mongo-2:27017,mongo-3:27017/?replicaSet=rs0&authSource=admin
+
+# Application connection  
+mongodb://appuser:password@mongo-1:27017,mongo-2:27017,mongo-3:27017/myapp?replicaSet=rs0
+```
+
+---
+
+## Performance Tips
+
+- **Memory**: Allocate sufficient RAM for working set
+- **Storage**: Use SSD storage for better I/O performance  
+- **Network**: Ensure low latency between replica set members
+- **Indexes**: Create appropriate indexes for query patterns
+- **Monitoring**: Set up MongoDB Compass or ops manager
+
+---
+
+**Note**: This setup provides a foundation for MongoDB replica sets. For production environments, implement additional monitoring, backup strategies, and security hardening measures.
