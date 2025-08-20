@@ -84,8 +84,7 @@ mkdir -p mongodb-data/mongo1
 mkdir -p mongodb-data/mongo2  
 mkdir -p mongodb-data/mongo3
 
-# Generate security keyfile (this should already be in your custom image)
-# Note: Since you're using zahid03/my-mongo:8.0, the keyfile should be built into the image
+# Note: If you want to use your image then you should build the image first with the your key.
 ```
 
 3. **Start the Cluster**
