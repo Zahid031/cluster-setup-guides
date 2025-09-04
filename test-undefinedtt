@@ -1,0 +1,190 @@
+Wrtie a bash script the connect securely to three remote server using key-based authentication and retrives CPU,RAM,storage utilization,script must handle unreachable server gracefully,collect the metrics in parallel to mijnimize execution time,generate json report sorted in descending order by storageusage,then CPU,then memory.Store the report in /var/report directory,exit with an appropriate with an appropraite status code and log any error to /var/log/server-metrics.log
+
+
+
+#!/usr/bin/env bash
+# Collect CPU, RAM, and storage utilization from remote servers over SSH and produce a sorted JSON report.
+
+set -uo pipefail
+
+# ---- Settings ----
+SERVERS=("192.168.56.51" "192.168.56.52" "192.168.56.53")
+USER="vagrant"
+SSH_KEY="${SSH_KEY:-$HOME/.ssh/id_rsa}"         # override by exporting SSH_KEY=/path/to/key
+SSH_OPTS=(-i "$SSH_KEY" -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=5 -o ServerAliveCountMax=2)
+
+REPORT_DIR="/var/report"
+LOG_FILE="/var/log/server-metrics.log"
+
+TIMESTAMP="$(date +'%Y%m%d-%H%M%S')"
+REPORT_FILE="${REPORT_DIR}/server-metrics-${TIMESTAMP}.json"
+
+# ---- Prep dirs & logging ----
+mkdir -p "$REPORT_DIR" || { echo "ERROR: Cannot create $REPORT_DIR" | tee -a "$LOG_FILE"; exit 2; }
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+touch "$LOG_FILE" 2>/dev/null || { echo "ERROR: Cannot write to $LOG_FILE"; exit 2; }
+
+echo "[$(date -Is)] INFO  Starting metrics collection" >> "$LOG_FILE"
+
+# ---- Temp workspace ----
+TMPDIR="$(mktemp -d /tmp/server-metrics.XXXXXX)"
+trap 'rm -rf "$TMPDIR"' EXIT
+
+# ---- Remote probe command ----
+# Outputs: "<cpu_pct> <mem_pct> <disk_pct>"
+read -r -d '' REMOTE_CMD <<'EOF'
+cpu_usage() {
+  # Calculate CPU usage over ~1s from /proc/stat (portable, avoids locale issues)
+  read _ a b c d e f g h i j < /proc/stat
+  idle1="$d"; total1=$((a+b+c+d+e+f+g+h+i+j))
+  sleep 1
+  read _ a b c d e f g h i j < /proc/stat
+  idle2="$d"; total2=$((a+b+c+d+e+f+g+h+i+j))
+  idle=$((idle2-idle1)); total=$((total2-total1))
+  if [ "$total" -gt 0 ]; then
+    printf "%d" $(( (100*(total-idle))/total ))
+  else
+    printf "%d" 0
+  fi
+}
+mem_usage() {
+  # Use 'free -m' (line 2 is Mem:)
+  if command -v free >/dev/null 2>&1; then
+    free -m | awk 'NR==2{ if ($2>0) printf("%.0f", ($3*100)/$2); else print 0 }'
+  else
+    # Fallback from /proc/meminfo
+    awk '
+      /^MemTotal:/ {t=$2}
+      /^MemAvailable:/ {a=$2}
+      END { if (t>0) printf("%.0f", ((t-a)*100)/t); else print 0 }
+    ' /proc/meminfo
+  fi
+}
+disk_usage() {
+  # Root filesystem usage percentage (no % sign)
+  df -P / | awk 'NR==2{gsub(/%/,"",$5); print $5+0}'
+}
+
+printf "%s %s %s\n" "$(cpu_usage)" "$(mem_usage)" "$(disk_usage)"
+EOF
+
+# ---- Collect in parallel ----
+success_count=0
+fail_count=0
+
+for host in "${SERVERS[@]}"; do
+  {
+    # Default: mark as unreachable until proven otherwise
+    status="unreachable"
+    cpu="-1"; mem="-1"; disk="-1"
+    err=""
+
+    # Attempt SSH
+    if ! output=$(ssh "${SSH_OPTS[@]}" "${USER}@${host}" "bash -s" <<< "$REMOTE_CMD" 2> >(err=$(cat); typeset -p err >/dev/null)); then
+      echo "[$(date -Is)] ERROR ${host} unreachable or auth failed: ${err}" >> "$LOG_FILE"
+    else
+      # Expect: "<cpu> <mem> <disk>"
+      read -r cpu mem disk <<< "$output"
+      # Basic sanity
+      if [[ "$cpu" =~ ^-?[0-9]+$ && "$mem" =~ ^-?[0-9]+$ && "$disk" =~ ^-?[0-9]+$ ]]; then
+        status="ok"
+      else
+        echo "[$(date -Is)] ERROR ${host} returned malformed data: '$output'" >> "$LOG_FILE"
+        cpu="-1"; mem="-1"; disk="-1"; status="bad_data"
+      fi
+    fi
+
+    # Emit a tab-separated line for sorting & later JSON conversion
+    # Fields: host<TAB>cpu<TAB>mem<TAB>disk<TAB>status
+    printf "%s\t%s\t%s\t%s\t%s\n" "$host" "$cpu" "$mem" "$disk" "$status" > "${TMPDIR}/${host}.tsv"
+  } &
+done
+
+wait
+
+# ---- Aggregate & sort: by storage desc, then CPU desc, then memory desc ----
+# We sort numerically on columns: disk(4) desc, cpu(2) desc, mem(3) desc
+cat "${TMPDIR}/"*.tsv 2>/dev/null | sort -t$'\t' -k4,4nr -k2,2nr -k3,3nr > "${TMPDIR}/sorted.tsv" || true
+
+# Count successes/failures
+while IFS=$'\t' read -r host cpu mem disk status; do
+  if [[ "$status" == "ok" ]]; then
+    ((success_count++))
+  else
+    ((fail_count++))
+  fi
+done < "${TMPDIR}/sorted.tsv"
+
+# ---- Convert TSV to JSON (no external deps like jq needed) ----
+# JSON structure:
+# {
+#   "generated_at": "ISO8601",
+#   "servers": [
+#     {"host":"IP","cpu_pct":..,"memory_pct":..,"storage_pct":..,"status":"ok|..."},
+#     ...
+#   ]
+# }
+{
+  printf '{\n  "generated_at": "%s",\n  "servers": [\n' "$(date -Is)"
+  line_no=0
+  total_lines=$(wc -l < "${TMPDIR}/sorted.tsv" | tr -d ' ')
+  while IFS=$'\t' read -r host cpu mem disk status; do
+    printf '    { "host": "%s", "cpu_pct": %s, "memory_pct": %s, "storage_pct": %s, "status": "%s" }' \
+      "$host" "$cpu" "$mem" "$disk" "$status"
+    line_no=$((line_no+1))
+    if [ "$line_no" -lt "$total_lines" ]; then
+      printf ',\n'
+    else
+      printf '\n'
+    fi
+  done < "${TMPDIR}/sorted.tsv"
+  printf '  ]\n}\n'
+} > "$REPORT_FILE"
+
+# ---- Final logging & exit code ----
+echo "[$(date -Is)] INFO  Report written: $REPORT_FILE" >> "$LOG_FILE"
+echo "[$(date -Is)] INFO  Success: ${success_count}, Failed: ${fail_count}" >> "$LOG_FILE"
+
+if [ "$success_count" -gt 0 ] && [ "$fail_count" -eq 0 ]; then
+  exit 0
+elif [ "$success_count" -gt 0 ] && [ "$fail_count" -gt 0 ]; then
+  exit 1
+else
+  exit 2
+fi
+
+
+$SSH_OPTS -i "$SSH_KEY"
+
+
+
+
+
+Create a systemd service unit to manage a custom application. The service must:
+ensure the application runs at startup and automatically restarts on failure.
+redirect standard output and error logs to /home/log.
+configure log rotation with a maximum size of 100 mb per file, retention of 30 days, and compression enabled for older logs.
+ensure logs are owned by a specific non-root user for security.
+demonstrate how you would test and validate the service functionality, including failure recovery.
+
+
+
+
+write a bash script that perform following task
+
+deploy an nginx container with fixed name and custom network,wait until container is confirmed healthy using docker inspector or curl health)
+logs a message that container is deployed and running to /var/log/nginx-deploy.loggingreplace the default index.html with message Task Accomplished,verifying the change by sending an http request to the container,if any error rollback,remove the container
+
+
+
+write a bash script
+
+i already have set up emails msmtp server and email is going now i want slightly change here that i will log in with ssh vagrant@192.168.56.51,as i already set up rsa public key there,,i want to use tar for compresse files in a directory than rsync the compressed file to another server vagrant@192.168.56.52 ,first rsync the from my local to my /tmp directory and then again copy the file to second server from my machine as rsa is setted for it also,,,write logs in /var/log/file-sync.log and last send the mail,,and remove unneccesary thing from the script,keep simple and less line as possibl;dont need all log ,just final output log or error log that it
+
+
+
+
+
+
+
+create a systemd service unit to mana
