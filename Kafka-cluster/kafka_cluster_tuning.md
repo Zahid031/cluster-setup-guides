@@ -7,17 +7,17 @@ Complete setup guide for 3-node Kafka cluster with actual configurations and per
 ### Node Configuration
 | Node | IP Address | Role | Node ID |
 |------|------------|------|---------|
-| kafka-1 | 192.168.61.146 | broker,controller | 1 |
-| kafka-2 | 192.168.61.147 | broker,controller | 2 |
-| kafka-3 | 192.168.61.148 | broker,controller | 3 |
+| kafka-01 | 192.168.61.146 | broker,controller | 1 |
+| kafka-02 | 192.168.61.147 | broker,controller | 2 |
+| kafka-03 | 192.168.61.148 | broker,controller | 3 |
 
 ## Installation Steps
 
 ### 1. Configure Hosts (All Nodes)
 ```bash
-echo "192.168.61.146 kafka-1
-192.168.61.147 kafka-2
-192.168.61.148 kafka-3" | sudo tee -a /etc/hosts
+echo "192.168.61.146 kafka-01
+192.168.61.147 kafka-02
+192.168.61.148 kafka-03" | sudo tee -a /etc/hosts
 ```
 
 ### 2. Install Java (All Nodes)
