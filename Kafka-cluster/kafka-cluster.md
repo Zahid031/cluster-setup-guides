@@ -515,4 +515,4 @@ sudo systemctl {start|stop|restart|status} kafka
 ./kafka-consumer-groups.sh --bootstrap-server kafka-1:9092 {--list|--describe}
 ```
 
-This setup provides a robust foundation for Apache Kafka deployment in production or development environments.
+This setup provides a robust foundation for Apache Kafka deployment in production or development environments......
