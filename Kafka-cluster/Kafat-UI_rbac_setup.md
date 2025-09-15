@@ -41,10 +41,10 @@ services:
     ports:
       - "8080:8080"
     networks:
-      - kafka-net
+      - kafkaUI-net
 
   kafbat-ui:
-    image: ghcr.io/kafbat/kafka-ui:latest
+    image: ghcr.io/kafbat/kafka-ui:main
     container_name: kafbat-ui
     environment:
       SPRING_CONFIG_ADDITIONAL-LOCATION: /app-config.yml,/roles.yml
@@ -56,10 +56,10 @@ services:
     depends_on:
       - keycloak
     networks:
-      - kafka-net
+      - kafkaUI-net
 
 networks:
-  kafka-net:
+  kafkaUI-net:
     driver: bridge
 ```
 
