@@ -237,6 +237,14 @@ networks:
     driver: bridge
 ```
 
+## Directory Creation
+```bash
+mkdir -p ./data/kafka1/data ./data/kafka1/metadata \
+         ./data/kafka2/data ./data/kafka2/metadata \
+         ./data/kafka3/data ./data/kafka3/metadata
+
+chmod 777 -R data
+```
 ## Common Commands
 
 Stop the cluster:
