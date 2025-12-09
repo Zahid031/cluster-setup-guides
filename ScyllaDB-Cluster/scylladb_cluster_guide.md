@@ -286,6 +286,16 @@ nodetool flush
 nodetool ring
 ```
 
+### Testing
+```bash
+cassandra-stress write n=50000 \
+    -mode native cql3 user=dbadmin password='#CasndraDb@dm!nL0' \
+    -node 192.168.169.44,192.168.169.5,192.168.169.4 \
+    -rate threads=200 \
+    -log file=/home/$(whoami)/cassandra-stress-logs/stress.log \
+    -port native=9042
+```
+
 
 ## Production Considerations
 
