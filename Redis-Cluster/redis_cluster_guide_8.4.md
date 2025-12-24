@@ -114,6 +114,9 @@ maxmemory-policy volatile-lru
 # System
 supervised systemd
 daemonize no
+protected-mode no
+cluster-require-full-coverage no
+
 ```
 
 ### Configure Port 6381
@@ -158,6 +161,9 @@ maxmemory-policy volatile-lru
 # System
 supervised systemd
 daemonize no
+protected-mode no
+cluster-require-full-coverage no
+
 ```
 
 > **⚠️ Important:** 
