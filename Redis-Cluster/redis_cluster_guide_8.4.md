@@ -353,6 +353,14 @@ redis-cli -a MySecurePass123 -p 6381 cluster reset hard
 
 ---
 
+## Tuning
+```bash
+sudo swapoff -a
+sudo sed -i '/swap/d' /etc/fstab
+echo "vm.overcommit_memory=1" | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
 ## 📊 Understanding the Setup
 
 ### What is a Redis Cluster?
